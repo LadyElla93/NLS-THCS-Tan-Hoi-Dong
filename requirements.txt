@@ -2,4 +2,3 @@ streamlit
 pandas
 docx2txt
 pdfplumber
-google-generative-ai
