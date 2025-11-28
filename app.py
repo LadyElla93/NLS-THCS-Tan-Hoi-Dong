@@ -6,177 +6,150 @@ import re
 import google.generativeai as genai
 import time
 
-# --- CẤU HÌNH TRANG & CSS ---
-st.set_page_config(page_title="AI Soát Giáo Án NLS", page_icon="🧠", layout="centered")
+# --- CẤU HÌNH ---
+st.set_page_config(page_title="Trợ lý Giáo Án AI", page_icon="✨", layout="centered")
 
-# CSS để ẩn các lỗi nhỏ và làm đẹp giao diện
-st.markdown("""
-    <style>
-    .stAlert { margin-top: 10px; }
-    .element-container { margin-bottom: 1rem; }
-    </style>
-""", unsafe_allow_html=True)
+# --- 1. DỮ LIỆU NĂNG LỰC SỐ (RÚT GỌN CHO AI HIỂU) ---
+NLS_CONTEXT = """
+DANH SÁCH MÃ NĂNG LỰC SỐ (NLS):
+- 1.1TC1a: Xác định nhu cầu và tìm kiếm dữ liệu.
+- 1.2TC1a: Phân tích, đánh giá độ tin cậy thông tin.
+- 2.1TC1a: Tương tác, giao tiếp qua công nghệ (Zalo, Padlet...).
+- 2.2TC1a: Chia sẻ thông tin, hợp tác nhóm online.
+- 3.1TC1a: Tạo mới nội dung số (Soạn thảo, Slide, Video, Ảnh).
+- 4.3TC1a: Bảo vệ sức khỏe, an toàn khi dùng thiết bị.
+- 5.1TC1a: Giải quyết lỗi kỹ thuật, vận hành thiết bị.
+- 5.4TC1a: Tự học, cập nhật kiến thức qua Internet.
+"""
 
-# --- KHỐI XỬ LÝ TRUNG TÂM (ĐƯỢC BẢO VỆ) ---
-try:
-    # 1. CẤU HÌNH API GEMINI TỪ SECRETS (SERVER SIDE)
-    # Lấy key từ hệ thống (Người dùng không cần nhập)
+# --- 2. HÀM GỌI GEMINI (XỬ LÝ THÔNG MINH) ---
+def ask_gemini(activity_text, subject, grade):
     try:
+        # Lấy Key từ hệ thống
         api_key = st.secrets["GEMINI_API_KEY"]
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel('gemini-1.5-flash')
-        HAS_AI = True
-    except:
-        HAS_AI = False
-
-    # 2. DỮ LIỆU NĂNG LỰC SỐ (RÚT GỌN ĐỂ AI THAM CHIẾU)
-    NLS_REF = """
-    - 1.1TC1a: Tìm kiếm dữ liệu cơ bản.
-    - 1.2TC1a: Đánh giá độ tin cậy thông tin.
-    - 2.1TC1a: Giao tiếp/Tương tác qua công nghệ.
-    - 2.2TC1a: Chia sẻ & Hợp tác nhóm online.
-    - 3.1TC1a: Soạn thảo văn bản, làm slide, cắt ghép ảnh/video.
-    - 4.3TC1a: An toàn sức khỏe khi dùng thiết bị.
-    - 5.1TC1a: Giải quyết lỗi kỹ thuật cơ bản.
-    - 5.4TC1a: Tự học qua Internet.
-    """
-
-    # 3. HÀM CẮT GIÁO ÁN THÀNH CÁC HOẠT ĐỘNG
-    def segment_lesson_plan(text):
-        # Tìm các điểm bắt đầu: Hoạt động 1, 2... hoặc I, II, III...
-        # Regex này tìm các tiêu đề hoạt động phổ biến
-        pattern = r'(Hoạt động\s+\d+|[IVX]+\.\s+Tiến trình|[IVX]+\.\s+Tổ chức|Hoạt động\s+[a-zA-Z]+:)'
-        segments = re.split(pattern, text, flags=re.IGNORECASE)
         
-        activities = []
-        current_title = "Phần mở đầu"
-        
-        for i in range(len(segments)):
-            segment = segments[i].strip()
-            if not segment: continue
-            
-            # Nếu là tiêu đề ngắn
-            if len(segment) < 50 and re.match(pattern, segment, re.IGNORECASE):
-                current_title = segment
-            elif len(segment) > 50: # Nếu là nội dung dài
-                activities.append({"title": current_title, "content": segment})
-        
-        return activities
-
-    # 4. HÀM GỌI AI PHÂN TÍCH TỪNG HOẠT ĐỘNG
-    def analyze_activity_with_ai(activity, subject):
-        if not HAS_AI: return None
-        
-        # Prompt cực kỹ để AI không nói linh tinh
         prompt = f"""
-        Bạn là chuyên gia thẩm định giáo án.
-        Môn học: {subject}.
+        Đóng vai chuyên gia giáo dục.
+        Môn: {subject} - {grade}.
         
-        Hãy đọc nội dung hoạt động sau:
-        "Tên HĐ: {activity['title']}
-        Nội dung: {activity['content'][:1500]}"
+        Đoạn văn hoạt động trong giáo án:
+        "{activity_text[:1500]}"
         
-        Nhiệm vụ:
-        1. Xác định xem trong hoạt động này, giáo viên CÓ YÊU CẦU học sinh sử dụng thiết bị công nghệ/phần mềm không? (Ví dụ: xem video, dùng máy tính, dùng app, tìm internet...).
-        2. Nếu CÓ: Hãy chọn 1 mã NLS phù hợp nhất từ danh sách: {NLS_REF}.
-        3. Nếu KHÔNG (hoặc chỉ là hoạt động viết bảng/nghe giảng thông thường): Trả về "NONE".
+        Tài liệu tham chiếu:
+        {NLS_CONTEXT}
         
-        Nếu môn học là "Tin học", hãy dễ tính hơn. Nếu là môn khác, phải CÓ CÔNG NGHỆ THỰC SỰ mới được gợi ý.
+        YÊU CẦU:
+        1. Đọc kỹ đoạn văn. Giáo viên/Học sinh CÓ sử dụng công nghệ/thiết bị số không?
+        2. Nếu KHÔNG (chỉ giảng bài/viết bảng): Trả về "NONE".
+        3. Nếu CÓ: Hãy chọn 1 Mã NLS phù hợp nhất và đề xuất sản phẩm.
         
-        Trả về định dạng duy nhất (không giải thích thêm):
-        MÃ_ID | TÊN_SẢN_PHẨM_HỌC_SINH_LÀM | GIẢI_THÍCH_NGẮN
-        (Ví dụ: 3.1TC1a | Slide thuyết trình | Học sinh dùng PowerPoint để trình bày nhóm)
+        ĐỊNH DẠNG TRẢ VỀ (Bắt buộc dùng dấu gạch đứng | để ngăn cách):
+        MÃ_ID | YÊU_CẦU_CẦN_ĐẠT_NGẮN_GỌN | SẢN_PHẨM_CỤ_THỂ_CỦA_HS | GIẢI_THÍCH_VỊ_TRÍ
+        
+        Ví dụ: 
+        3.1TC1a | Tạo nội dung số | Slide thuyết trình nhóm | Tại hoạt động báo cáo, HS dùng PowerPoint.
         """
         
-        try:
-            response = model.generate_content(prompt)
-            return response.text.strip()
-        except:
-            return None
+        response = model.generate_content(prompt)
+        return response.text.strip()
+    except Exception as e:
+        return "ERROR"
 
-    # 5. HÀM ĐỌC FILE
-    def read_file(uploaded_file):
-        try:
-            if uploaded_file.name.endswith('.docx'): return docx2txt.process(uploaded_file)
-            elif uploaded_file.name.endswith('.pdf'):
-                with pdfplumber.open(uploaded_file) as pdf:
-                    text = ""
-                    for p in pdf.pages: text += p.extract_text() + "\n"
-                return text
-        except: return ""
-        return ""
-
-    # --- GIAO DIỆN CHÍNH ---
-    st.title("🤖 AI Thẩm Định Giáo Án (Deep Scan)")
+# --- 3. HÀM CẮT LỚP GIÁO ÁN ---
+def segment_text(text):
+    # Tách theo các từ khóa Hoạt động
+    chunks = re.split(r'(Hoạt động\s+\d+|[IVX]+\.\s+Tiến trình|[IVX]+\.\s+Tổ chức|Hoạt động\s+[a-zA-Z]+:)', text)
+    activities = []
+    current_title = "Phần mở đầu"
     
-    if not HAS_AI:
-        st.error("⚠️ Chưa cấu hình API Key trong Secrets. Vui lòng liên hệ quản trị viên.")
-        st.stop()
+    for i in range(len(chunks)):
+        c = chunks[i].strip()
+        if len(c) < 50 and ("Hoạt động" in c or "Tiến trình" in c):
+            current_title = c
+        elif len(c) > 50:
+            activities.append({"title": current_title, "content": c})
+    return activities
 
-    col1, col2 = st.columns(2)
-    grade = col1.selectbox("Khối lớp", ["Lớp 6", "Lớp 7", "Lớp 8", "Lớp 9"])
-    subject = col2.selectbox("Môn học", ["Toán học", "Ngữ văn", "Tiếng Anh", "KHTN", "Lịch sử & Địa lý", "Tin học", "Công nghệ", "GDTC", "Nghệ thuật", "HĐTN"])
+# --- 4. HÀM ĐỌC FILE ---
+def read_file(uploaded_file):
+    try:
+        if uploaded_file.name.endswith('.docx'): return docx2txt.process(uploaded_file)
+        elif uploaded_file.name.endswith('.pdf'):
+            with pdfplumber.open(uploaded_file) as pdf:
+                text = ""
+                for p in pdf.pages: text += p.extract_text() + "\n"
+            return text
+    except: return ""
+    return ""
 
-    uploaded_file = st.file_uploader("Tải lên giáo án (Word/PDF)", type=['docx', 'pdf'])
+# --- 5. GIAO DIỆN ---
+st.title("✨ AI Soát Giáo Án (Gemini Integrated)")
+st.caption("Phân tích sâu ngữ cảnh - Gợi ý sản phẩm đầu ra")
 
-    if uploaded_file and st.button("BẮT ĐẦU QUÉT"):
-        with st.spinner("AI đang đọc hiểu từng hoạt động trong giáo án..."):
-            content = read_file(uploaded_file)
+# Kiểm tra Key
+if "GEMINI_API_KEY" not in st.secrets:
+    st.error("⚠️ Chưa nhập API Key vào Secrets. Vui lòng cấu hình ngay.")
+    st.stop()
+
+col1, col2 = st.columns(2)
+grade = col1.selectbox("Khối lớp", ["Lớp 6", "Lớp 7", "Lớp 8", "Lớp 9"])
+subject = col2.selectbox("Môn học", ["Toán học", "Ngữ văn", "Tiếng Anh", "KHTN", "Lịch sử & Địa lý", "Tin học", "Công nghệ", "HĐTN", "Nghệ thuật", "GDTC"])
+
+uploaded_file = st.file_uploader("Tải giáo án (Word/PDF)", type=['docx', 'pdf'])
+
+if uploaded_file and st.button("PHÂN TÍCH VỚI AI"):
+    with st.spinner("Đang đọc giáo án và kết nối Gemini AI..."):
+        content = read_file(uploaded_file)
+        
+        if len(content) < 50:
+            st.warning("File không có nội dung.")
+        else:
+            # 1. Cắt lớp
+            acts = segment_text(content)
             
-            if len(content) < 100:
-                st.warning("File quá ngắn hoặc không đọc được nội dung.")
-            else:
-                # 1. Cắt lớp giáo án
-                activities = segment_lesson_plan(content)
+            # 2. Gửi từng phần cho AI
+            found_count = 0
+            st.divider()
+            
+            progress = st.progress(0)
+            
+            for i, act in enumerate(acts):
+                progress.progress((i + 1) / len(acts))
                 
-                results_found = False
-                st.divider()
+                # Gọi AI
+                res = ask_gemini(act['content'], subject, grade)
                 
-                # 2. Duyệt từng hoạt động và hỏi AI
-                progress_bar = st.progress(0)
-                
-                for idx, act in enumerate(activities):
-                    # Cập nhật thanh tiến trình
-                    progress_bar.progress((idx + 1) / len(activities))
-                    
-                    # Gọi AI
-                    ai_result = analyze_activity_with_ai(act, subject)
-                    
-                    # Xử lý kết quả trả về
-                    if ai_result and "NONE" not in ai_result and "|" in ai_result:
-                        parts = ai_result.split("|")
-                        if len(parts) >= 3:
-                            nls_id = parts[0].strip()
-                            product = parts[1].strip()
-                            explanation = parts[2].strip()
+                # Xử lý kết quả
+                if res and "NONE" not in res and "ERROR" not in res and "|" in res:
+                    parts = res.split("|")
+                    if len(parts) >= 3:
+                        found_count += 1
+                        
+                        ma_id = parts[0].strip()
+                        yccd = parts[1].strip()
+                        sp = parts[2].strip()
+                        vitri = parts[3].strip() if len(parts) > 3 else "Trong hoạt động này"
+                        
+                        with st.container():
+                            st.subheader(f"📍 {act['title']}")
+                            st.caption(f"Trích: \"{act['content'][:150]}...\"")
                             
-                            # Hiển thị kết quả
-                            with st.container():
-                                st.subheader(f"📍 Vị trí: {act['title']}")
-                                # Trích dẫn 1 đoạn ngắn để đối chiếu
-                                preview_text = act['content'][:150].replace("\n", " ") + "..."
-                                st.caption(f"Trích nội dung: \"{preview_text}\"")
-                                
-                                c1, c2 = st.columns([1, 3])
-                                c1.success(f"**{nls_id}**")
-                                c2.info(f"**Gợi ý bổ sung:**\n{explanation}")
-                                st.markdown(f"📦 **Sản phẩm:** {product}")
-                                st.markdown("---")
-                                results_found = True
-                    
-                    # Nghỉ 1 chút để tránh Spam API của Google (Rate limit)
-                    time.sleep(1) 
-
-                progress_bar.empty()
-
-                if not results_found:
-                    if subject == "Tin học":
-                        st.warning("Lạ quá! Giáo án Tin học mà AI không tìm thấy yếu tố công nghệ nào?")
-                    else:
-                        st.success("✅ Đã quét xong toàn bài. Giáo án này tập trung vào hoạt động truyền thống, không có (hoặc chưa cần thiết) tích hợp Năng Lực Số. Không cần bổ sung gì thêm.")
-
-except Exception as e:
-    # Bắt mọi lỗi crash (Màn hình trắng) và hiển thị thông báo đẹp
-    st.error("⚠️ Đã xảy ra lỗi xử lý:")
-    st.code(str(e))
-    st.info("Hãy thử tải lại file hoặc chọn file định dạng chuẩn hơn.")
+                            c1, c2 = st.columns([1, 2])
+                            c1.success(f"**Mã: {ma_id}**")
+                            c2.info(f"**YCCĐ:** {yccd}")
+                            
+                            st.markdown(f"📦 **Sản phẩm HS:** {sp}")
+                            st.markdown(f"📝 **Giải thích:** {vitri}")
+                            st.markdown("---")
+                
+                # Nghỉ nhẹ để tránh spam Google
+                time.sleep(0.5)
+            
+            progress.empty()
+            
+            if found_count == 0:
+                st.warning("AI đã đọc toàn bài nhưng không tìm thấy hoạt động nào sử dụng công nghệ số rõ ràng.")
+            else:
+                st.success(f"✅ Hoàn tất! Tìm thấy {found_count} vị trí tích hợp.")
