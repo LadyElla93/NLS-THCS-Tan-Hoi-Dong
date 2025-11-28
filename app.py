@@ -3,140 +3,180 @@ import pandas as pd
 import docx2txt
 import pdfplumber
 import re
+import google.generativeai as genai
+import time
 
-# --- CẤU HÌNH TRANG (BẮT BUỘC PHẢI Ở DÒNG ĐẦU TIÊN) ---
-st.set_page_config(page_title="Trợ lý NLS (Deep Scan)", page_icon="🎯", layout="centered")
+# --- CẤU HÌNH TRANG & CSS ---
+st.set_page_config(page_title="AI Soát Giáo Án NLS", page_icon="🧠", layout="centered")
 
-# --- KHỐI BẮT LỖI TOÀN CỤC ---
+# CSS để ẩn các lỗi nhỏ và làm đẹp giao diện
+st.markdown("""
+    <style>
+    .stAlert { margin-top: 10px; }
+    .element-container { margin-bottom: 1rem; }
+    </style>
+""", unsafe_allow_html=True)
+
+# --- KHỐI XỬ LÝ TRUNG TÂM (ĐƯỢC BẢO VỆ) ---
 try:
-    # --- 1. TỪ ĐIỂN DỮ LIỆU ---
-    SUBJECT_DATA = {
-        "Toán học": {"kw": ["geogebra", "máy tính", "excel", "đồ thị", "tính toán"], "id": "5.1TC1a", "prod": "Hình vẽ đồ thị hoặc Kết quả tính toán số"},
-        "Ngữ văn": {"kw": ["soạn thảo", "word", "powerpoint", "trình chiếu", "video", "tra cứu"], "id": "3.1TC1a", "prod": "Slide thuyết trình hoặc Văn bản số hóa"},
-        "Tiếng Anh": {"kw": ["từ điển", "file nghe", "audio", "video", "ghi âm", "app"], "id": "2.1TC1a", "prod": "File ghi âm hoặc Hội thoại số"},
-        "KHTN": {"kw": ["thí nghiệm ảo", "mô phỏng", "số liệu", "kính hiển vi", "video"], "id": "1.2TC1a", "prod": "Bảng số liệu hoặc Video thí nghiệm"},
-        "Lịch sử & Địa lý": {"kw": ["bản đồ", "google earth", "tranh ảnh", "gps", "tư liệu"], "id": "1.1TC1a", "prod": "Bản đồ số hoặc Bộ sưu tập tư liệu"},
-        "Tin học": {"kw": ["lập trình", "code", "thuật toán", "máy tính", "phần mềm"], "id": "5.4TC1a", "prod": "Chương trình máy tính"},
-        "Công nghệ": {"kw": ["bản vẽ", "thiết kế", "cad", "mô hình", "video"], "id": "3.1TC1b", "prod": "Bản thiết kế kỹ thuật số"},
-        "HĐ Trải nghiệm": {"kw": ["khảo sát", "form", "canva", "poster", "video", "ảnh"], "id": "2.2TC1a", "prod": "Poster truyền thông số"},
-        "Nghệ thuật": {"kw": ["vẽ", "chỉnh ảnh", "video", "ghi âm", "nhạc cụ"], "id": "3.1TC1a", "prod": "Tác phẩm nghệ thuật số"},
-        "GDTC": {"kw": ["video", "đồng hồ", "nhịp tim", "app", "ghi hình"], "id": "4.3TC1a", "prod": "Video phân tích động tác"}
-    }
+    # 1. CẤU HÌNH API GEMINI TỪ SECRETS (SERVER SIDE)
+    # Lấy key từ hệ thống (Người dùng không cần nhập)
+    try:
+        api_key = st.secrets["GEMINI_API_KEY"]
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        HAS_AI = True
+    except:
+        HAS_AI = False
 
-    # --- 2. DATA NLS CỐT LÕI ---
-    @st.cache_data
-    def load_nls_db():
-        data = [
-            {"Id": "1.1TC1a", "Muc": "TC1", "YCCD": "Xác định nhu cầu và tìm kiếm dữ liệu trên môi trường số."},
-            {"Id": "1.2TC1a", "Muc": "TC1", "YCCD": "Phân tích và đánh giá dữ liệu, thông tin số."},
-            {"Id": "2.1TC1a", "Muc": "TC1", "YCCD": "Sử dụng công nghệ để tương tác và giao tiếp phù hợp."},
-            {"Id": "2.2TC1a", "Muc": "TC1", "YCCD": "Chia sẻ thông tin và phối hợp qua môi trường số."},
-            {"Id": "3.1TC1a", "Muc": "TC1", "YCCD": "Tạo và biên tập nội dung số (văn bản, hình ảnh)."},
-            {"Id": "3.1TC1b", "Muc": "TC1", "YCCD": "Thể hiện bản thân qua sản phẩm số đơn giản."},
-            {"Id": "4.3TC1a", "Muc": "TC1", "YCCD": "Sử dụng thiết bị số an toàn, bảo vệ sức khỏe."},
-            {"Id": "5.1TC1a", "Muc": "TC1", "YCCD": "Giải quyết vấn đề kỹ thuật cơ bản của thiết bị số."},
-            {"Id": "5.4TC1a", "Muc": "TC1", "YCCD": "Tự cập nhật và phát triển năng lực số bản thân."}
-        ]
-        # Nhân bản cho TC2
-        full_data = []
-        for item in data:
-            full_data.append(item)
-            item2 = item.copy()
-            item2["Muc"] = "TC2"
-            full_data.append(item2)
-        return pd.DataFrame(full_data)
+    # 2. DỮ LIỆU NĂNG LỰC SỐ (RÚT GỌN ĐỂ AI THAM CHIẾU)
+    NLS_REF = """
+    - 1.1TC1a: Tìm kiếm dữ liệu cơ bản.
+    - 1.2TC1a: Đánh giá độ tin cậy thông tin.
+    - 2.1TC1a: Giao tiếp/Tương tác qua công nghệ.
+    - 2.2TC1a: Chia sẻ & Hợp tác nhóm online.
+    - 3.1TC1a: Soạn thảo văn bản, làm slide, cắt ghép ảnh/video.
+    - 4.3TC1a: An toàn sức khỏe khi dùng thiết bị.
+    - 5.1TC1a: Giải quyết lỗi kỹ thuật cơ bản.
+    - 5.4TC1a: Tự học qua Internet.
+    """
 
-    # --- 3. THUẬT TOÁN ĐỌC SÂU (DEEP SCAN) ---
-    def analyze_deep(text, subject, grade):
-        results = []
-        # Xử lý text an toàn
-        if not text: return []
+    # 3. HÀM CẮT GIÁO ÁN THÀNH CÁC HOẠT ĐỘNG
+    def segment_lesson_plan(text):
+        # Tìm các điểm bắt đầu: Hoạt động 1, 2... hoặc I, II, III...
+        # Regex này tìm các tiêu đề hoạt động phổ biến
+        pattern = r'(Hoạt động\s+\d+|[IVX]+\.\s+Tiến trình|[IVX]+\.\s+Tổ chức|Hoạt động\s+[a-zA-Z]+:)'
+        segments = re.split(pattern, text, flags=re.IGNORECASE)
         
-        text_lower = text.lower()
-        subj_config = SUBJECT_DATA.get(subject, SUBJECT_DATA["Toán học"])
-        keywords = subj_config["kw"]
+        activities = []
+        current_title = "Phần mở đầu"
         
-        # Cắt đoạn văn thông minh
-        segments = re.split(r'(Hoạt động\s+\d+|II\.|III\.|Tiến trình|Luyện tập|Vận dụng)', text)
-        current_loc = "Nội dung bài học"
-        
-        for segment in segments:
-            # Xác định tiêu đề
-            if len(segment) < 60 and len(segment) > 3 and any(x in segment for x in ["Hoạt động", "II.", "III.", "Tiến trình"]):
-                current_loc = segment.strip()
-                continue
+        for i in range(len(segments)):
+            segment = segments[i].strip()
+            if not segment: continue
             
-            # Quét nội dung
-            if len(segment) > 30:
-                found_kws = [k for k in keywords if k in segment.lower()]
-                if found_kws:
-                    # Trích xuất câu chứng minh
-                    sentences = segment.split('.')
-                    evidence = next((s for s in sentences if any(k in s.lower() for k in found_kws)), f"Sử dụng {found_kws[0]}")
-                    
-                    # Tìm dữ liệu NLS
-                    target_muc = 'TC1' if grade in ['Lớp 6', 'Lớp 7'] else 'TC2'
-                    df = load_nls_db()
-                    row = df[(df['Id'] == subj_config['id']) & (df['Muc'] == target_muc)]
-                    if row.empty: row = df[df['Muc'] == target_muc].iloc[0]
-                    else: row = row.iloc[0]
+            # Nếu là tiêu đề ngắn
+            if len(segment) < 50 and re.match(pattern, segment, re.IGNORECASE):
+                current_title = segment
+            elif len(segment) > 50: # Nếu là nội dung dài
+                activities.append({"title": current_title, "content": segment})
+        
+        return activities
 
-                    results.append({
-                        "vitri": current_loc,
-                        "id": row['Id'],
-                        "yccd": row['YCCD'],
-                        "tool": found_kws[0],
-                        "prod": subj_config['prod'],
-                        "evidence": evidence.strip()
-                    })
-                    if len(results) >= 2: break # Chỉ lấy tối đa 2 kết quả tốt nhất
-        return results
-
-    # --- 4. GIAO DIỆN NGƯỜI DÙNG ---
-    st.title("🎯 Trợ Lý Soát Giáo Án (Deep Scan)")
-    st.info("Hệ thống tự động đọc nội dung và đề xuất vị trí chèn NLS chính xác.")
-    st.markdown("---")
-
-    c1, c2 = st.columns(2)
-    grade = c1.selectbox("Khối lớp", ["Lớp 6", "Lớp 7", "Lớp 8", "Lớp 9"])
-    subject = c2.selectbox("Môn học", list(SUBJECT_DATA.keys()))
-    uploaded_file = st.file_uploader("Tải giáo án (Word/PDF)", type=['docx', 'pdf'])
-
-    if uploaded_file and st.button("QUÉT NỘI DUNG"):
-        content = ""
+    # 4. HÀM GỌI AI PHÂN TÍCH TỪNG HOẠT ĐỘNG
+    def analyze_activity_with_ai(activity, subject):
+        if not HAS_AI: return None
+        
+        # Prompt cực kỹ để AI không nói linh tinh
+        prompt = f"""
+        Bạn là chuyên gia thẩm định giáo án.
+        Môn học: {subject}.
+        
+        Hãy đọc nội dung hoạt động sau:
+        "Tên HĐ: {activity['title']}
+        Nội dung: {activity['content'][:1500]}"
+        
+        Nhiệm vụ:
+        1. Xác định xem trong hoạt động này, giáo viên CÓ YÊU CẦU học sinh sử dụng thiết bị công nghệ/phần mềm không? (Ví dụ: xem video, dùng máy tính, dùng app, tìm internet...).
+        2. Nếu CÓ: Hãy chọn 1 mã NLS phù hợp nhất từ danh sách: {NLS_REF}.
+        3. Nếu KHÔNG (hoặc chỉ là hoạt động viết bảng/nghe giảng thông thường): Trả về "NONE".
+        
+        Nếu môn học là "Tin học", hãy dễ tính hơn. Nếu là môn khác, phải CÓ CÔNG NGHỆ THỰC SỰ mới được gợi ý.
+        
+        Trả về định dạng duy nhất (không giải thích thêm):
+        MÃ_ID | TÊN_SẢN_PHẨM_HỌC_SINH_LÀM | GIẢI_THÍCH_NGẮN
+        (Ví dụ: 3.1TC1a | Slide thuyết trình | Học sinh dùng PowerPoint để trình bày nhóm)
+        """
+        
         try:
-            if uploaded_file.name.endswith('.docx'): content = docx2txt.process(uploaded_file)
+            response = model.generate_content(prompt)
+            return response.text.strip()
+        except:
+            return None
+
+    # 5. HÀM ĐỌC FILE
+    def read_file(uploaded_file):
+        try:
+            if uploaded_file.name.endswith('.docx'): return docx2txt.process(uploaded_file)
             elif uploaded_file.name.endswith('.pdf'):
                 with pdfplumber.open(uploaded_file) as pdf:
-                    for p in pdf.pages: content += p.extract_text() + "\n"
-        except Exception as e:
-            st.error(f"Lỗi đọc file: {e}")
+                    text = ""
+                    for p in pdf.pages: text += p.extract_text() + "\n"
+                return text
+        except: return ""
+        return ""
 
-        if len(content) < 50:
-            st.warning("File trống hoặc không đọc được nội dung.")
-        else:
-            findings = analyze_deep(content, subject, grade)
+    # --- GIAO DIỆN CHÍNH ---
+    st.title("🤖 AI Thẩm Định Giáo Án (Deep Scan)")
+    
+    if not HAS_AI:
+        st.error("⚠️ Chưa cấu hình API Key trong Secrets. Vui lòng liên hệ quản trị viên.")
+        st.stop()
+
+    col1, col2 = st.columns(2)
+    grade = col1.selectbox("Khối lớp", ["Lớp 6", "Lớp 7", "Lớp 8", "Lớp 9"])
+    subject = col2.selectbox("Môn học", ["Toán học", "Ngữ văn", "Tiếng Anh", "KHTN", "Lịch sử & Địa lý", "Tin học", "Công nghệ", "GDTC", "Nghệ thuật", "HĐTN"])
+
+    uploaded_file = st.file_uploader("Tải lên giáo án (Word/PDF)", type=['docx', 'pdf'])
+
+    if uploaded_file and st.button("BẮT ĐẦU QUÉT"):
+        with st.spinner("AI đang đọc hiểu từng hoạt động trong giáo án..."):
+            content = read_file(uploaded_file)
             
-            st.divider()
-            if findings:
-                st.success(f"✅ Tìm thấy {len(findings)} vị trí phù hợp:")
-                for i, item in enumerate(findings):
-                    # Hiển thị kết quả dạng thẻ (Card)
-                    with st.container():
-                        st.subheader(f"📍 {item['vitri']}")
-                        st.markdown(f"> *\"{item['evidence']}...\"*")
-                        
-                        st.markdown(f"**Đề xuất bổ sung:**")
-                        insert_text = (
-                            f"👉 **Hoạt động:** Sử dụng **{item['tool']}** để tạo **{item['prod']}**.\n"
-                            f"👉 **Đáp ứng YCCĐ:** [{item['id']}] {item['yccd']}"
-                        )
-                        st.info(insert_text)
-                        st.markdown("---")
+            if len(content) < 100:
+                st.warning("File quá ngắn hoặc không đọc được nội dung.")
             else:
-                st.warning("Không tìm thấy nội dung tích hợp Năng Lực Số phù hợp.")
+                # 1. Cắt lớp giáo án
+                activities = segment_lesson_plan(content)
+                
+                results_found = False
+                st.divider()
+                
+                # 2. Duyệt từng hoạt động và hỏi AI
+                progress_bar = st.progress(0)
+                
+                for idx, act in enumerate(activities):
+                    # Cập nhật thanh tiến trình
+                    progress_bar.progress((idx + 1) / len(activities))
+                    
+                    # Gọi AI
+                    ai_result = analyze_activity_with_ai(act, subject)
+                    
+                    # Xử lý kết quả trả về
+                    if ai_result and "NONE" not in ai_result and "|" in ai_result:
+                        parts = ai_result.split("|")
+                        if len(parts) >= 3:
+                            nls_id = parts[0].strip()
+                            product = parts[1].strip()
+                            explanation = parts[2].strip()
+                            
+                            # Hiển thị kết quả
+                            with st.container():
+                                st.subheader(f"📍 Vị trí: {act['title']}")
+                                # Trích dẫn 1 đoạn ngắn để đối chiếu
+                                preview_text = act['content'][:150].replace("\n", " ") + "..."
+                                st.caption(f"Trích nội dung: \"{preview_text}\"")
+                                
+                                c1, c2 = st.columns([1, 3])
+                                c1.success(f"**{nls_id}**")
+                                c2.info(f"**Gợi ý bổ sung:**\n{explanation}")
+                                st.markdown(f"📦 **Sản phẩm:** {product}")
+                                st.markdown("---")
+                                results_found = True
+                    
+                    # Nghỉ 1 chút để tránh Spam API của Google (Rate limit)
+                    time.sleep(1) 
+
+                progress_bar.empty()
+
+                if not results_found:
+                    if subject == "Tin học":
+                        st.warning("Lạ quá! Giáo án Tin học mà AI không tìm thấy yếu tố công nghệ nào?")
+                    else:
+                        st.success("✅ Đã quét xong toàn bài. Giáo án này tập trung vào hoạt động truyền thống, không có (hoặc chưa cần thiết) tích hợp Năng Lực Số. Không cần bổ sung gì thêm.")
 
 except Exception as e:
-    st.error("⚠️ Đã xảy ra lỗi hệ thống:")
-    st.code(e)
-    st.caption("Hãy chụp màn hình lỗi này gửi cho kỹ thuật viên.")
+    # Bắt mọi lỗi crash (Màn hình trắng) và hiển thị thông báo đẹp
+    st.error("⚠️ Đã xảy ra lỗi xử lý:")
+    st.code(str(e))
+    st.info("Hãy thử tải lại file hoặc chọn file định dạng chuẩn hơn.")

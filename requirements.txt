@@ -1,4 +1,5 @@
-streamlit
+streamlit>=1.30.0
 pandas
 docx2txt
 pdfplumber
+google-generative-ai>=0.3.0
