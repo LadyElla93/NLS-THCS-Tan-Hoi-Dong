@@ -2,4 +2,5 @@ streamlit
 pandas
 docx2txt
 pdfplumber
-google-generative-ai
+google-genai
+# phien ban moi nhat
