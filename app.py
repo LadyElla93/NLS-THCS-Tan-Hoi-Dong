@@ -4,10 +4,9 @@ import docx2txt
 import pdfplumber
 import re
 import google.generativeai as genai
-from openai import OpenAI # Thư viện dùng để gọi Grok
 
 # --- CẤU HÌNH TRANG ---
-st.set_page_config(page_title="Trợ lý Giáo Án NLS (Multi-AI)", page_icon="🧠")
+st.set_page_config(page_title="Trợ lý Giáo Án NLS (Gemini)", page_icon="✨")
 
 # --- 1. TỪ ĐIỂN DỮ LIỆU ---
 SUBJECT_MAPPING = {
@@ -23,42 +22,33 @@ SUBJECT_MAPPING = {
     "GDTC": {"keywords": ["video", "đồng hồ bấm giờ", "nhịp tim", "app sức khỏe", "ghi hình"], "default_id": "4.3TC1a"}
 }
 
-# --- 2. HÀM GỌI GEMINI ---
-def ask_gemini(text, subject, nls):
+# --- 2. HÀM GỌI GEMINI (CÓ DỰ PHÒNG) ---
+def ask_gemini_auto(lesson_text, subject, nls_content):
     try:
-        api_key = st.secrets["GEMINI_API_KEY"]
+        # 1. Thử lấy Key từ hệ thống
+        api_key = st.secrets.get("GEMINI_API_KEY", None)
+        
+        # 2. Nếu không có Key -> Trả về None để dùng Mẫu câu
+        if not api_key: return None
+        
+        # 3. Nếu có Key -> Gọi AI
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel('gemini-1.5-flash')
-        prompt = f"Gợi ý 1 sản phẩm số cụ thể học sinh làm được trong bài môn {subject} để đạt năng lực '{nls}'. Nội dung bài: {text[:1000]}. Ngắn gọn."
-        return model.generate_content(prompt).text.strip()
-    except: return None
-
-# --- 3. HÀM GỌI GROK (MỚI) ---
-def ask_grok(text, subject, nls):
-    try:
-        # Lấy Key Grok từ Secrets
-        api_key = st.secrets["XAI_API_KEY"]
-        client = OpenAI(
-            api_key=api_key,
-            base_url="https://api.x.ai/v1", # Cổng kết nối của Grok
-        )
         
         prompt = f"""
-        Đóng vai chuyên gia EdTech. Dựa vào bài học môn {subject} (Tóm tắt: "{text[:1000]}..."), và năng lực số "{nls}".
-        Hãy đề xuất 01 SẢN PHẨM SỐ CỤ THỂ mà học sinh sẽ tạo ra.
-        Văn phong: Hiện đại, ngắn gọn, tập trung vào sản phẩm.
-        Mẫu: "Sản phẩm: [Tên sản phẩm]. Cách làm: [Mô tả ngắn]."
-        """
+        Đóng vai chuyên gia giáo dục.
+        Bài học môn: {subject}. Tóm tắt: "{lesson_text[:1000]}".
+        Năng lực số: "{nls_content}".
         
-        completion = client.chat.completions.create(
-            model="grok-beta", # Hoặc grok-2 tùy thời điểm
-            messages=[{"role": "system", "content": "You are a helpful education assistant."},
-                      {"role": "user", "content": prompt}]
-        )
-        return completion.choices[0].message.content
-    except: return None
+        Hãy đề xuất 1 SẢN PHẨM SỐ CỤ THỂ học sinh làm được.
+        Viết ngắn gọn 2-3 câu. Mẫu: "Học sinh dùng [Công cụ] để tạo [Sản phẩm], qua đó [Lợi ích]."
+        """
+        response = model.generate_content(prompt)
+        return response.text.strip()
+    except:
+        return None # Nếu lỗi mạng hoặc key sai -> Dùng mẫu câu
 
-# --- 4. HÀM LOAD DỮ LIỆU VÀ ĐỌC FILE (GIỮ NGUYÊN) ---
+# --- 3. LOAD DATA & ĐỌC FILE ---
 @st.cache_data
 def load_nls_data():
     data = {
@@ -92,14 +82,14 @@ def read_file(uploaded_file):
             return text
     except: return ""
 
-# --- 5. LOGIC PHÂN TÍCH TỔNG HỢP ---
-def analyze_mixed_ai(text, df, subject):
+# --- 4. LOGIC PHÂN TÍCH ---
+def analyze_final(text, df, subject):
     text_lower = text.lower()
     subj_info = SUBJECT_MAPPING.get(subject, {"keywords": [], "default_id": ""})
     
     # Tìm công cụ
     found_tools = [kw for kw in subj_info["keywords"] if kw in text_lower]
-    if not found_tools: found_tools = ["công nghệ", "máy tính", "internet"]
+    if not found_tools: found_tools = ["thiết bị số", "internet", "phần mềm"]
 
     # Tìm ID
     matched_ids = []
@@ -112,54 +102,54 @@ def analyze_mixed_ai(text, df, subject):
         defs = df[df['Id'] == subj_info["default_id"]]
         if not defs.empty: matched_ids.append(defs.iloc[0])
 
-    # KẾT QUẢ
-    final_results = []
+    # Kết quả
+    results = []
     seen = set()
     for row in matched_ids[:2]:
         if row['Id'] in seen: continue
         seen.add(row['Id'])
 
-        # --- GỌI CẢ 2 AI ---
-        gemini_res = ask_gemini(text, subject, row['YCCD'])
-        grok_res = ask_grok(text, subject, row['YCCD'])
+        # --- CƠ CHẾ THÔNG MINH ---
+        # Ưu tiên 1: Hỏi AI (Nếu có Key trong Secrets)
+        ai_reply = ask_gemini_auto(text, subject, row['YCCD'])
         
-        # Tạo nội dung hiển thị
-        exp_content = ""
-        
-        if gemini_res:
-            exp_content += f"✨ **Gợi ý từ Gemini:**\n{gemini_res}\n\n"
-        
-        if grok_res:
-            exp_content += f"🚀 **Gợi ý từ Grok:**\n{grok_res}\n\n"
-            
-        if not gemini_res and not grok_res:
-            exp_content = f"Học sinh sử dụng công cụ ({', '.join(found_tools)}) để tạo sản phẩm số phù hợp."
+        explanation = ""
+        if ai_reply:
+            explanation = f"✨ **Gợi ý từ AI:** {ai_reply}"
+        else:
+            # Ưu tiên 2: Dùng Mẫu câu (Nếu không có Key)
+            tools_str = ", ".join(found_tools[:2])
+            explanation = (
+                f"📝 **Gợi ý:** Học sinh sử dụng **{tools_str}** để thực hiện hoạt động học tập. "
+                f"Sản phẩm dự kiến: Bài trình chiếu, Video hoặc Phiếu học tập số. "
+                f"Qua đó rèn luyện kỹ năng '{row['YCCD']}'."
+            )
 
-        final_results.append({
+        results.append({
             "id": row['Id'],
             "yccd": row['YCCD'],
-            "exp": exp_content
+            "exp": explanation
         })
-    return final_results
+    return results
 
-# --- 6. GIAO DIỆN ---
-st.title("🤖 Giáo Án NLS (Gemini + Grok)")
-st.caption("Kết hợp sức mạnh phân tích từ Google và xAI.")
+# --- 5. GIAO DIỆN ---
+st.title("🤖 Giáo Án Năng Lực Số")
+st.caption("Hỗ trợ giáo viên tìm năng lực số phù hợp trong bài dạy.")
 st.markdown("---")
 
 col1, col2 = st.columns(2)
 grade = col1.selectbox("Khối lớp", ["Lớp 6", "Lớp 7", "Lớp 8", "Lớp 9"])
 subject = col2.selectbox("Môn học", list(SUBJECT_MAPPING.keys()))
-uploaded_file = st.file_uploader("Tải giáo án", type=['docx', 'pdf'])
+uploaded_file = st.file_uploader("Tải giáo án (Word/PDF)", type=['docx', 'pdf'])
 
 if uploaded_file and st.button("PHÂN TÍCH"):
     target = 'TC1' if grade in ['Lớp 6', 'Lớp 7'] else 'TC2'
-    with st.spinner("Đang tham khảo ý kiến chuyên gia AI..."):
+    with st.spinner("Đang phân tích..."):
         content = read_file(uploaded_file)
         if len(content) < 50: st.warning("Không tìm thấy Năng lực số")
         else:
             df = load_nls_data()
-            res = analyze_mixed_ai(content, df[df['Muc'] == target], subject)
+            res = analyze_final(content, df[df['Muc'] == target], subject)
             
             st.divider()
             if res:
