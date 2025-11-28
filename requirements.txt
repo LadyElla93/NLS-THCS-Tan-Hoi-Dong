@@ -3,4 +3,4 @@ pandas
 docx2txt
 pdfplumber
 google-genai
-# phien ban moi nhat
+openpyxl

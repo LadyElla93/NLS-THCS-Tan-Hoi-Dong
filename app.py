@@ -3,118 +3,129 @@ import pandas as pd
 import docx2txt
 import pdfplumber
 import re
-from google import genai   # ĐÃ SỬA ĐÚNG (package mới)
+from google import genai
 import time
+import os
 
-st.set_page_config(page_title="Trợ lý Giáo Án AI", page_icon="✨", layout="centered")
+st.set_page_config(page_title="AI Soát Giáo Án THCS - NLS", page_icon="✨", layout="centered")
 
-# --- HÀM GỌI GEMINI ---
+# ===================== ĐỌC BẢNG MÃ HOÁ NĂNG LỰC SỐ =====================
+@st.cache_data
+def load_nls_data():
+    try:
+        df = pd.read_excel("Ma hoa NLS0.xlsx")
+        # Chỉ lấy các cột cần thiết
+        df = df[['Id', 'YCCD']].dropna()
+        df['Id'] = df['Id'].astype(str).str.strip()
+        df['YCCD'] = df['YCCD'].astype(str).str.strip()
+        return df
+    except Exception as e:
+        st.error("Không tìm thấy file Ma hoa NLS0.xlsx trong thư mục!")
+        st.stop()
+
+nls_df = load_nls_data()
+id_to_yccd = dict(zip(nls_df['Id'], nls_df['YCCD']))
+
+# ===================== GỌI GEMINI =====================
 def ask_gemini(text, subject, grade):
     try:
-        # Lấy Key từ Secrets
         api_key = st.secrets["GEMINI_API_KEY"]
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel('gemini-1.5-flash')
-        
+
         prompt = f"""
-        Đóng vai chuyên gia giáo dục. Môn: {subject} - {grade}.
-        Đoạn văn hoạt động: "{text[:1500]}"
-        
+        Bạn là chuyên gia giáo dục Việt Nam, rất giỏi phát hiện hoạt động tích hợp công nghệ số trong giáo án THCS.
+        Môn: {subject} - Khối {grade}
+
+        Đoạn văn hoạt động cần phân tích:
+        "{text[:2000]}"
+
         Nhiệm vụ:
-        1. Tìm hoạt động có sử dụng công nghệ/thiết bị số.
-        2. Nếu KHÔNG có: Trả về "NONE".
-        3. Nếu CÓ: Chọn mã Năng lực số phù hợp và đề xuất sản phẩm đầu ra của học sinh.
-        
-        Định dạng trả về (dùng dấu | ngăn cách):
-        MÃ_ID | YÊU_CẦU_CẦN_ĐẠT | SẢN_PHẨM_HỌC_SINH | GIẢI_THÍCH_NGẮN
+        - Nếu KHÔNG có hoạt động nào dùng công nghệ số (máy tính, điện thoại, internet, phần mềm, Padlet, Canva, Google Form, AI, Quizizz, v.v.) → trả về đúng 1 từ: NONE
+        - Nếu CÓ → trả về đúng 1 dòng theo định dạng sau (không thêm bất kỳ chữ nào ngoài dòng này):
+
+        MÃ_NLS | TÊN_SẢN_PHẨM_HỌC_SINH
+
+        Ví dụ:
+        3.1TC2a | Video giới thiệu sản phẩm địa phương
+        2.4TC2a | Sản phẩm thuyết trình nhóm trên Canva
+        6.2TC1a | Câu hỏi trắc nghiệm trên Google Form
+
+        Chỉ trả về 1 dòng duy nhất, không giải thích dài!
         """
         response = model.generate_content(prompt)
         return response.text.strip()
     except Exception as e:
         return "ERROR"
 
-# --- HÀM CẮT LỚP VĂN BẢN ---
-def segment_text(text):
-    chunks = re.split(r'(Hoạt động\s+\d+|[IVX]+\.\s+Tiến trình|[IVX]+\.\s+Tổ chức|Hoạt động\s+[a-zA-Z]+:)', text)
-    activities = []
-    current = "Phần mở đầu"
-    for c in chunks:
-        c = c.strip()
-        if len(c) < 50 and ("Hoạt động" in c or "Tiến trình" in c or "Tổ chức" in c):
-            current = c
-        elif len(c) > 50:
-            activities.append({"title": current, "content": c})
-    return activities
-
-# --- HÀM ĐỌC FILE ---
+# ===================== ĐỌC FILE =====================
 def read_file(file):
-    try:
-        if file.name.endswith('.docx'):
-            return docx2txt.process(file)
-        elif file.name.endswith('.pdf'):
-            with pdfplumber.open(file) as pdf:
-                return "".join([page.extract_text() or "" for page in pdf.pages])
-    except:
-        return ""
+    if file.name.endswith('.docx'):
+        return docx2txt.process(file)
+    elif file.name.endswith('.pdf'):
+        with pdfplumber.open(file) as pdf:
+            text = ""
+            for page in pdf.pages:
+                page_text = page.extract_text()
+                if page_text:
+                    text += page_text + "\n"
+            return text
     return ""
 
-# --- GIAO DIỆN ---
-st.title("AI Soát Giáo Án (Gemini)")
+# ===================== CHẶT HOẠT ĐỘNG =====================
+def segment_text(text):
+    patterns = [
+        r'Hoạt động \d+',
+        r'Hoạt động [A-Za-z]',
+        r'[IVX]+\.\s*(Tiến trình|Tổ chức thực hiện)',
+    ]
+    regex = "|".join(patterns)
+    chunks = re.split(regex, text, flags=re.IGNORECASE)
+    activities = []
+    current_title = "Phần mở đầu"
+    for chunk in chunks:
+        chunk = chunk.strip()
+        if re.match(regex, chunk, re.IGNORECASE) and len(chunk) < 100:
+            current_title = chunk.strip()
+        elif len(chunk) > 80:
+            activities.append({"title": current_title, "content": chunk})
+    return activities if activities else [{"title": "Toàn bộ giáo án", "content": text}]
 
-# Kiểm tra API Key
+# ===================== GIAO DIỆN =====================
+st.title("AI Soát Giáo Án Tích Hợp Năng Lực Số THCS")
+
 if "GEMINI_API_KEY" not in st.secrets:
-    st.error("Chưa nhập API Key Gemini vào Settings → Secrets.")
+    st.error("Chưa cấu hình GEMINI_API_KEY trong Secrets!")
     st.stop()
 
 c1, c2 = st.columns(2)
 grade = c1.selectbox("Khối lớp", ["Lớp 6", "Lớp 7", "Lớp 8", "Lớp 9"])
 subject = c2.selectbox("Môn học", [
     "Toán học", "Ngữ văn", "Tiếng Anh", "KHTN", "Lịch sử & Địa lý",
-    "Tin học", "Công nghệ", "HĐTN", "Nghệ thuật", "GDTC"
+    "Tin học", "Công nghệ", "HĐTN", "Nghệ thuật", "GDTC", "GDCD"
 ])
 
-uploaded_file = st.file_uploader("Tải lên giáo án (docx hoặc pdf)", type=['docx', 'pdf'])
+uploaded_file = st.file_uploader("Tải giáo án (docx hoặc pdf)", type=['docx', 'pdf'])
 
 if uploaded_file and st.button("BẮT ĐẦU PHÂN TÍCH", type="primary"):
-    with st.spinner("Đang đọc file và phân tích bằng Gemini..."):
+    with st.spinner("Đang đọc file và phân tích..."):
         content = read_file(uploaded_file)
-        
         if len(content) < 100:
-            st.error("Không đọc được nội dung file. Hãy thử file khác.")
-            st.stop()
-            
-        acts = segment_text(content)
-        if len(acts) == 0:
-            st.warning("Không nhận diện được các hoạt động trong giáo án.")
+            st.error("Không đọc được nội dung file!")
             st.stop()
 
+        activities = segment_text(content)
         found = 0
         st.divider()
-        progress_bar = st.progress(0)
 
-        for i, act in enumerate(acts):
-            progress_bar.progress((i + 1) / len(acts))
-            
+        progress = st.progress(0)
+        for i, act in enumerate(activities):
+            progress.progress((i + 1) / len(activities))
             result = ask_gemini(act['content'], subject, grade)
-            
-            if result and "NONE" not in result and "ERROR" not in result and "|" in result:
-                parts = [p.strip() for p in result.split("|")]
-                if len(parts) >= 3:
-                    found += 1
-                    st.subheader(f"{act['title']}")
-                    st.success(f"Mã năng lực số: **{parts[0]}**")
-                    st.info(f"Yêu cầu cần đạt: **{parts[1]}**")
-                    st.write(f"Sản phẩm học sinh: **{parts[2]}**")
-                    if len(parts) > 3:
-                        st.caption(f"Giải thích: {parts[3]}")
-                    st.divider()
-            
-            time.sleep(1.2)  # Tránh vượt rate-limit miễn phí của Gemini
+            time.sleep(1)
 
-        progress_bar.empty()
-        
-        if found == 0:
-            st.warning("Không tìm thấy hoạt động nào ứng dụng công nghệ số phù hợp trong giáo án này.")
-        else:
-            st.balloons()
-            st.success(f"Hoàn thành! Đã tìm thấy {found} hoạt động tích hợp công nghệ số.")
+            if result and result != "NONE" and result != "ERROR":
+                if "|" in result:
+                    parts = result.split("|", 1)
+                    ma_id = parts[0].strip()
+                    san_pham = parts[1].strip() if len(parts) > 1 else "Sản phẩm số
