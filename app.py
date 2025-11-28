@@ -14,13 +14,12 @@ st.set_page_config(page_title="AI Soát Giáo Án THCS - NLS", page_icon="✨", 
 def load_nls_data():
     try:
         df = pd.read_excel("Ma hoa NLS0.xlsx")
-        # Chỉ lấy các cột cần thiết
         df = df[['Id', 'YCCD']].dropna()
         df['Id'] = df['Id'].astype(str).str.strip()
         df['YCCD'] = df['YCCD'].astype(str).str.strip()
         return df
     except Exception as e:
-        st.error("Không tìm thấy file Ma hoa NLS0.xlsx trong thư mục!")
+        st.error("Không tìm thấy hoặc lỗi đọc file Ma hoa NLS0.xlsx ! Hãy kiểm tra lại tên file và đặt cùng thư mục với app.py")
         st.stop()
 
 nls_df = load_nls_data()
@@ -34,24 +33,23 @@ def ask_gemini(text, subject, grade):
         model = genai.GenerativeModel('gemini-1.5-flash')
 
         prompt = f"""
-        Bạn là chuyên gia giáo dục Việt Nam, rất giỏi phát hiện hoạt động tích hợp công nghệ số trong giáo án THCS.
+        Bạn là chuyên gia giáo dục THCS Việt Nam, cực giỏi phát hiện hoạt động tích hợp công nghệ số.
         Môn: {subject} - Khối {grade}
 
-        Đoạn văn hoạt động cần phân tích:
+        Đoạn văn hoạt động:
         "{text[:2000]}"
 
-        Nhiệm vụ:
-        - Nếu KHÔNG có hoạt động nào dùng công nghệ số (máy tính, điện thoại, internet, phần mềm, Padlet, Canva, Google Form, AI, Quizizz, v.v.) → trả về đúng 1 từ: NONE
-        - Nếu CÓ → trả về đúng 1 dòng theo định dạng sau (không thêm bất kỳ chữ nào ngoài dòng này):
+        Nếu KHÔNG có hoạt động nào dùng công nghệ số (máy tính, điện thoại, internet, phần mềm, Padlet, Canva, Google Form, AI, Quizizz, Mentimeter, Kahoot, v.v.) → trả về đúng 1 từ: NONE
 
+        Nếu CÓ → trả về đúng 1 dòng duy nhất, định dạng:
         MÃ_NLS | TÊN_SẢN_PHẨM_HỌC_SINH
 
         Ví dụ:
         3.1TC2a | Video giới thiệu sản phẩm địa phương
-        2.4TC2a | Sản phẩm thuyết trình nhóm trên Canva
-        6.2TC1a | Câu hỏi trắc nghiệm trên Google Form
+        2.4TC2a | Bài thuyết trình nhóm trên Canva
+        6.2TC1a | Bộ câu hỏi trắc nghiệm trên Google Form
 
-        Chỉ trả về 1 dòng duy nhất, không giải thích dài!
+        Chỉ trả về 1 dòng, không giải thích thêm gì!
         """
         response = model.generate_content(prompt)
         return response.text.strip()
@@ -85,7 +83,7 @@ def segment_text(text):
     current_title = "Phần mở đầu"
     for chunk in chunks:
         chunk = chunk.strip()
-        if re.match(regex, chunk, re.IGNORECASE) and len(chunk) < 100:
+        if re.match(regex, chunk, re.IGNORECASE) and len(chunk) < 120:
             current_title = chunk.strip()
         elif len(chunk) > 80:
             activities.append({"title": current_title, "content": chunk})
@@ -108,24 +106,39 @@ subject = c2.selectbox("Môn học", [
 uploaded_file = st.file_uploader("Tải giáo án (docx hoặc pdf)", type=['docx', 'pdf'])
 
 if uploaded_file and st.button("BẮT ĐẦU PHÂN TÍCH", type="primary"):
-    with st.spinner("Đang đọc file và phân tích..."):
+    with st.spinner("Đang đọc file và phân tích bằng AI..."):
         content = read_file(uploaded_file)
         if len(content) < 100:
-            st.error("Không đọc được nội dung file!")
+            st.error("Không đọc được nội dung file! Thử file khác nhé.")
             st.stop()
 
         activities = segment_text(content)
         found = 0
         st.divider()
-
         progress = st.progress(0)
+
         for i, act in enumerate(activities):
             progress.progress((i + 1) / len(activities))
             result = ask_gemini(act['content'], subject, grade)
-            time.sleep(1)
+            time.sleep(1.2)  # tránh vượt rate-limit
 
-            if result and result != "NONE" and result != "ERROR":
-                if "|" in result:
-                    parts = result.split("|", 1)
-                    ma_id = parts[0].strip()
-                    san_pham = parts[1].strip() if len(parts) > 1 else "Sản phẩm số
+            if result and result != "NONE" and result != "ERROR" and "|" in result:
+                parts = result.split("|", 1)
+                ma_id = parts[0].strip()
+                san_pham = parts[1].strip() if len(parts) > 1 else "Sản phẩm số"
+
+                yccd = id_to_yccd.get(ma_id, "Không tìm thấy YCCD cho mã này")
+
+                found += 1
+                st.subheader(f"{act['title']}")
+                st.success(f"Mã năng lực số: **{ma_id}**")
+                st.info(f"Yêu cầu cần đạt: **{yccd}**")
+                st.write(f"Sản phẩm học sinh: **{san_pham}**")
+                st.divider()
+
+        progress.empty()
+        if found == 0:
+            st.warning("Không phát hiện hoạt động nào tích hợp công nghệ số.")
+        else:
+            st.balloons()
+            st.success(f"HOÀN THÀNH! Tìm thấy **{found}** hoạt động tích hợp năng lực số.")
