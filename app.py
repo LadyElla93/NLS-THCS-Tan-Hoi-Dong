@@ -16,7 +16,7 @@ def load_nls():
         df['YCCD'] = df['YCCD'].astype(str).str.strip()
         return df
     except Exception as e:
-        st.error("Không tìm thấy file Ma hoa NLS0.xlsx! Đặt đúng tên và cùng thư mục.")
+        st.error("Không tìm thấy file Ma hoa NLS0.xlsx! Đặt đúng tên và cùng thư mục với app.py")
         st.stop()
 
 df_nls = load_nls()
@@ -27,46 +27,51 @@ def deep_analyze_activity(text, subject, grade):
     t = text.lower()
     found = []
 
-    # Danh sách sản phẩm cực kỳ cụ thể (đã test với hàng trăm giáo án thật)
+    # Chuyển "Lớp 6" → 6 để tính toán
+    try:
+        grade_num = int(grade.replace("Lớp ", ""))
+    except:
+        grade_num = 7  # mặc định lớp 7 nếu lỗi
+
     rules = [
         # TIN HỌC LỚP 6
-        ("bài 1.*em và tin học|bài 2.*máy tính", "2.1TC1a", "Bảng kê khai các thiết bị số em đang sử dụng hàng ngày (Word)"),
-        ("bài 3.*tìm kiếm thông tin", "1.1TC1a", f"File Word: 'Kết quả tìm kiếm 5 nghề nghiệp hot nhất {grade+5} năm tới' (có link nguồn)"),
+        ("bài 1.*em và tin học|bài 2.*máy tính", "2.1TC1a", "Bảng kê khai các thiết bị số em đang sử dụng hàng ngày (file Word)"),
+        ("bài 3.*tìm kiếm thông tin", "1.1TC1a", f"File Word: 'Kết quả tìm kiếm 5 nghề nghiệp hot nhất năm 20{35 + grade_num - 6}' (có link nguồn)"),
         ("bài 4.*trình bày thông tin", "3.1TC1a", "File PowerPoint 5 slide giới thiệu bản thân (ảnh, sở thích, ước mơ)"),
         ("bài 5.*an toàn", "2.5TC1a", "Infographic '10 quy tắc vàng an toàn khi dùng Internet' (dùng Canva)"),
 
         # TIN HỌC LỚP 7
-        ("bài 1.*trình chiếu", "3.1TC2a", "File PowerPoint thuyết trình nhóm về 'Quảng Ninh – quê hương em' (có hiệu ứng, hình ảnh, âm thanh)"),
+        ("bài 1.*trình chiếu", "3.1TC2a", "File PowerPoint thuyết trình nhóm về 'Quê hương em' (có hiệu ứng, hình ảnh, âm thanh)"),
         ("bài 2.*bảng tính", "3.3TC1a", "File Excel thống kê điểm thi học kỳ 1 của lớp (có biểu đồ cột, lọc dữ liệu)"),
         ("bài 3.*tìm kiếm thông tin.*nguồn tin", "1.2TC2a", "Bảng so sánh độ tin cậy của 3 website thời tiết (Word + ảnh chụp màn hình)"),
         ("bài 4.*an toàn.*mật khẩu", "2.5TC2b", "Video 60 giây hướng dẫn 'Cách tạo mật khẩu mạnh và không bị hack' (quay bằng điện thoại)"),
 
         # TIN HỌC LỚP 8-9
         ("scratch|lập trình|khối lệnh", "4.1TC2a", "File dự án Scratch: Game 'Bắt chữ rơi' hoặc 'Đi qua mê cung' có điểm số, âm thanh"),
-        ("em và trí tuệ nhân tạo|ai", "6.1TC2a", "File Word: 'Phỏng vấn ChatGPT về nghề nghiệp tương lai' (có ảnh chụp màn hình hội thoại)"),
-        ("trình chiếu.*dự án", "3.1TC2b", "File PowerPoint nhóm thuyết trình dự án 'Ứng dụng AI trong y tế' (10-15 slide)"),
+        ("em và trí tuệ nhân tạo|ai|chatgpt", "6.1TC2a", "File Word: 'Phỏng vấn ChatGPT về nghề nghiệp tương lai' (có ảnh chụp màn hình hội thoại)"),
+        ("trình chiếu.*dự án", "3.1TC2b", "File PowerPoint nhóm thuyết trình dự án 'Ứng dụng AI trong cuộc sống' (10-15 slide)"),
 
-        # CÁC MÔN KHÁC – CŨNG SIÊU CỤ THỂ
-        ("google form|trắc nghiệm", "6.2TC1a", "Google Form khảo sát ý kiến lớp về giờ ra chơi (có 10 câu hỏi, có biểu đồ kết quả)"),
+        # CÁC MÔN KHÁC
+        ("google form|biểu mẫu|trắc nghiệm trực tuyến", "6.2TC1a", "Google Form khảo sát ý kiến lớp về giờ ra chơi (có 10 câu hỏi, có biểu đồ kết quả)"),
+        ("quizizz|kahoot|mentimeter", "6.2TC1b", "Phiên chơi Quizizz/Kahoot do học sinh tự tạo"),
         ("canva|poster|thiết kế", "3.1TC2a", "Poster A3 quảng cáo 'Ngày hội đọc sách' hoặc 'Bảo vệ môi trường' trên Canva"),
-        ("video|quay phim", "3.2TC2a", "Video 2 phút giới thiệu di tích lịch sử quê hương (có thuyết minh, chữ, nhạc nền)"),
-        ("padlet|mindmap", "2.4TC2a", "Bảng Padlet nhóm tổng hợp ý tưởng bảo vệ môi trường (có ảnh, video, bình chọn)"),
-        ("tìm kiếm.*dự án", "1.1TC1b", "File Word tổng hợp tư liệu về 'Anh hùng dân tộc Nguyễn Huệ' (có trích nguồn rõ ràng)"),
+        ("video|quay phim|dựng phim|capcut|tiktok", "3.2TC2a", "Video 2 phút giới thiệu di tích lịch sử quê hương (có thuyết minh, chữ, nhạc nền)"),
+        ("padlet|mindmap|bảng tương tác", "2.4TC2a", "Bảng Padlet nhóm tổng hợp ý tưởng bảo vệ môi trường (có ảnh, video, bình chọn)"),
+        ("tìm kiếm.*dự án|tài liệu", "1.1TC1b", "File Word tổng hợp tư liệu về một nhân vật lịch sử (có trích nguồn rõ ràng)"),
     ]
 
-    # Áp dụng quy tắc theo thứ tự ưu tiên
     for pattern, ma_id, san_pham in rules:
-        if re.search(pattern, t, re.IGNORECASE) and ma_id not in [x[0] for x in found]:
-            found.append((ma_id, san_pham))
-            if len(found) >= 5:
-                return found
+        if re.search(pattern, t, re.IGNORECASE):
+            if ma_id not in [x[0] for x in found]:
+                found.append((ma_id, san_pham))
+                if len(found) >= 5:
+                    return found
 
-    # Nếu không khớp quy tắc cụ thể → dùng quy tắc chung nhưng vẫn cụ thể
-    if not found:
-        if "máy tính" in t or "internet" in t:
-            found.append(("2.1TC1a", f"Sử dụng máy tính và Internet để hoàn thành bài tập {subject}"))
+    # Nếu không có gì → thêm 1 mã chung
+    if not found and any(k in t for k in ["máy tính", "internet", "online", "phần mềm"]):
+        found.append(("2.1TC1a", f"Sử dụng máy tính và Internet để hoàn thành bài tập môn {subject}"))
 
-    return found[:5]  # Tối đa 5
+    return found[:5]
 
 # ==================== ĐỌC FILE & CHẶT HOẠT ĐỘNG ====================
 def read_file(file):
@@ -137,4 +142,4 @@ if uploaded_file and st.button("BẮT ĐẦU PHÂN TÍCH CHI TIẾT", type="prim
             st.balloons()
             st.success(f"HOÀN THÀNH! Tìm thấy **{total}** năng lực số với sản phẩm cực kỳ cụ thể!")
 
-st.caption("App by Grok & giáo viên THCS Tân Hội Đông – Sản phẩm in được luôn vào giáo án")
+st.caption("App by Grok & giáo viên THCS Tân Hội Đông – In được luôn vào giáo án!")
